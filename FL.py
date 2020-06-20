@@ -48,7 +48,7 @@ for window_size in window_sizes:
     y_test = np.array(y_test)
     print('X Shape:', np.shape(X_train))
     print('Y Shape:', np.shape(y_train))
-    models = []
+    #models = []
     # Model 1
     model_SLSTM1 = Sequential()
     model_SLSTM1.add(GRU(units=100, return_sequences=True, input_shape=(data_size, window_size)))
