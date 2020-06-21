@@ -1,8 +1,28 @@
 
 import numpy as np
 from keras import backend as K
+#define the training proces
+import torch.nn.functional as F
 
 
+class Arguments():
+    def __init__(self):
+        self.batch_size = 64
+        self.test_batch_size = 1000
+        self.epoch = 20
+        self.lr = 0.01
+        self.momentum = 0.5
+        self.no_cuda = True
+        self.seed = 1
+        self.log_interval = 200
+        self.save_model = False
+
+args = Arguments()
+
+
+LOG_INTERVAL = 5
+BATCH_SIZE = 100
+EPOCHS = 20
 
 
 def one_hot(labels):
@@ -55,3 +75,31 @@ def f1(y_true, y_pred):
 	recall = recall(y_true, y_pred)
 	return 2*((precision*recall)/(precision+recall))
 
+def train(model, device, federated_train_loader, optimizer, epoch):
+    model.train()
+    # Iterate through each gateway's dataset
+    for idx, (data, target) in enumerate(federated_train_loader):
+        batch_idx = idx+1
+        # Send the model to the right gateway
+        model.send(data.location)
+        # Move the data and target labels to the device (cpu/gpu) for computation
+        data, target = data.to(device), target.to(device)
+        # Clear previous gradients (if they exist)
+        optimizer.zero_grad()
+        # Make a prediction
+        output = model(data)
+        # Calculate the cross entropy loss [We are doing classification]
+        loss = F.cross_entropy(output, target)
+        # Calculate the gradients
+        loss.backward()
+        # Update the model weights
+        optimizer.step()
+        # Get the model back from the gateway
+        model.get()
+        if batch_idx==len(federated_train_loader) or (batch_idx!=0 and batch_idx % LOG_INTERVAL == 0):
+            # get the loss back
+            loss = loss.get()
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * BATCH_SIZE, len(federated_train_loader) * BATCH_SIZE,
+                100. * batch_idx / len(federated_train_loader), loss.item()))
+    return model

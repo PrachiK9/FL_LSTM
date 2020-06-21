@@ -13,15 +13,43 @@ import pandas as pd
 import json
 import torch
 import syft as sy
+import torch.optim as optim
 
 
+class Arguments():
+    def __init__(self):
+        self.batch_size = 64
+        self.test_batch_size = 1000
+        self.epoch = 20
+        self.lr = 0.01
+        self.momentum = 0.5
+        self.no_cuda = True
+        self.seed = 1
+        self.log_interval = 200
+        self.save_model = False
+
+args = Arguments()
 
 
 fname = 'Final_Flow.pkl'
 data = pd.read_pickle(fname)
 print('Data Loaded to Memory...')
 window_sizes = [30, 40, 50, 70, 100]
+LOG_INTERVAL = 5
+BATCH_SIZE = 100
+EPOCHS = 20
 
+use_cuda = not args.no_cuda and torch.cuda.is_available()
+
+torch.manual_seed(args.seed)
+
+device = torch.device("cuda" if use_cuda else "cpu")
+
+
+
+def train(model, device, federated_train_loader, optimizer, epoch):
+    model.train()
+    # Iterate through each gateway's dataset
 
 
 for window_size in window_sizes:
@@ -48,7 +76,39 @@ for window_size in window_sizes:
     y_test = np.array(y_test)
     print('X Shape:', np.shape(X_train))
     print('Y Shape:', np.shape(y_train))
-    #models = []
+
+    hook = sy.TorchHook(torch)
+    torch.manual_seed(1)
+    gatway1 = sy.VirtualWorker(hook, id="gatway1")
+    gatway2 = sy.VirtualWorker(hook, id="gatway2")
+
+
+
+    n_feature = X_train.shape[1]
+    n_class = np.unique(y_train).shape[0]
+
+    print("Number of training features : ", n_feature)
+    print("Number of training classes : ", n_class)
+
+    train_inputs = torch.tensor(X_train.astype(dtype='float64')).tag("#iot", "#network", "#data", "#train")
+    train_labels = torch.tensor(y_train).tag("#iot", "#network", "#target", "#train")
+    test_inputs = torch.tensor(X_test.astype(dtype='float64')).tag("#iot", "#network", "#data", "#test")
+    test_labels = torch.tensor(y_test).tag("#iot", "#network", "#target", "#test")
+
+    train_idx = int(len(train_labels) / 2)
+    test_idx = int(len(test_labels) / 2)
+    gatway1_train_dataset = sy.BaseDataset(train_inputs[:train_idx], train_labels[:train_idx]).send(gatway1)
+    gatway2_train_dataset = sy.BaseDataset(train_inputs[train_idx:], train_labels[train_idx:]).send(gatway2)
+    gatway1_test_dataset = sy.BaseDataset(test_inputs[:test_idx], test_labels[:test_idx]).send(gatway1)
+    gatway2_test_dataset = sy.BaseDataset(test_inputs[test_idx:], test_labels[test_idx:]).send(gatway2)
+
+    # Create federated datasets, an extension of Pytorch TensorDataset class
+    federated_train_dataset = sy.FederatedDataset([gatway1_train_dataset, gatway2_train_dataset])
+    federated_test_dataset = sy.FederatedDataset([gatway1_test_dataset, gatway2_test_dataset])
+
+    # Create federated dataloaders, an extension of Pytorch DataLoader class
+    federated_train_loader = sy.FederatedDataLoader(federated_train_dataset, shuffle=True, batch_size=BATCH_SIZE)
+    federated_test_loader = sy.FederatedDataLoader(federated_test_dataset, shuffle=False, batch_size=BATCH_SIZE)
     # Model 1
     model_SLSTM1 = Sequential()
     model_SLSTM1.add(GRU(units=100, return_sequences=True, input_shape=(data_size, window_size)))
@@ -112,8 +172,10 @@ for window_size in window_sizes:
 
     for model_name in models.keys():
         model = models[model_name]
-        hist_RNN = model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=200, batch_size=5000,
-                             verbose=1)  # 80 train 20 test
+        model.tain()
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+        hist_RNN = rnn_model.train(model, device, federated_train_loader,optimizer, 20)
+
         with open('hist-' + model_name + "[" + str(window_size) + '].json', 'w') as f:
             json.dump(hist_RNN.history, f)
         model.save(model_name + "[" + str(window_size) + "].h5")
